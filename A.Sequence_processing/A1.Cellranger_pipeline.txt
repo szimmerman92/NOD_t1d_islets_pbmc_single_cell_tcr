@@ -1,0 +1,49 @@
+#This analysis was performed in Harvard high performance computing cluster O2.
+
+
+
+## Step 1. Software download and installation 
+#we downloaded Cell Ranger - 6.0.2 (June 16, 2021)
+
+curl -o cellranger-6.0.2.tar.gz
+
+#Unpack the tarball using the tar command:
+tar -zxvf cellranger-6.0.2.tar.gz
+
+
+##Step 2. Obtained demultiplex sequencing data from GeneWiz 
+
+
+##Step 3. Download the mouse reference for Gene expression and vdj and keep at reference directory
+
+mkdir mouse_reference
+cd mouse_reference
+mkdir GEX_reference
+mkdir vdj_reference
+
+cd GEX_reference
+wget https://cf.10xgenomics.com/supp/cell-exp/refdata-gex-mm10-2020-A.tar.gz
+tar -zxvf refdata-gex-mm10-2020-A.tar.gz
+
+cd vdj_reference
+wget https://cf.10xgenomics.com/supp/cell-vdj/refdata-cellranger-vdj-GRCm38-alts-ensembl-5.0.0.tar.gz
+tar -zxvf refdata-cellranger-vdj-GRCm38-alts-ensembl-5.0.0.tar.gz
+
+
+
+Step 4. Make configaration csv file for all samples. 
+
+
+
+Step 5. Run cellranger multi pipeline
+
+cd /cellranger_multi
+
+#this is an example run for sample A001
+
+cellranger multi --id=A001 --csv=/path to configuration file /A001.csv
+
+
+
+Step 6. Downstream analysis 
+Gene expression count and VDJ annotation output were used for all downstream analysis.

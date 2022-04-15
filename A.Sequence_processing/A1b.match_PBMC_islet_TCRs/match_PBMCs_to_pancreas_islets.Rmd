@@ -1,0 +1,89 @@
+---
+title: "match_PBMCs_to_pancreas_islets"
+author: "Sam Zimmerman"
+date: "8/3/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Goal is to use VDJ information to match cells to each other. cells with same vdj should be from same clonal population
+
+```{bash}
+
+cd /n/data1/joslin/icrb/kostic/szimmerman/t_cell_microbiome_dynamics
+
+# script takes the PBMC and islet for the same mouse as input and outputs the cell barcodes with the TCR sequences and whether the TCR is found in the other samples type. Also outputs the frequency of the TCR sequence
+
+# clone_pipeline_v2.R takes 3 things as input
+# 1. The TCR info for the islet
+# 2. The TCR info for the PBMCs
+# 3. Name of the output folder to store results in
+# 4. The pool number. This is for labeling purposes.
+
+Rscript clone_pipeline_v2.R /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A001/outs/per_sample_outs/A001/vdj_t/filtered_contig_annotations.csv /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A007/outs/per_sample_outs/A007/vdj_t/filtered_contig_annotations.csv clonal_matching_output 1
+
+Rscript clone_pipeline_v2.R /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A002/outs/per_sample_outs/A002/vdj_t/filtered_contig_annotations.csv /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A008/outs/per_sample_outs/A008/vdj_t/filtered_contig_annotations.csv clonal_matching_output 2
+
+Rscript clone_pipeline_v2.R /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A003/outs/per_sample_outs/A003/vdj_t/filtered_contig_annotations.csv /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A009/outs/per_sample_outs/A009/vdj_t/filtered_contig_annotations.csv clonal_matching_output 3
+
+Rscript clone_pipeline_v2.R /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A004/outs/per_sample_outs/A004/vdj_t/filtered_contig_annotations.csv /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A010/outs/per_sample_outs/A010/vdj_t/filtered_contig_annotations.csv clonal_matching_output 4
+
+Rscript clone_pipeline_v2.R /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A005/outs/per_sample_outs/A005/vdj_t/filtered_contig_annotations.csv /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A011/outs/per_sample_outs/A011/vdj_t/filtered_contig_annotations.csv clonal_matching_output 5
+
+Rscript clone_pipeline_v2.R /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A006/outs/per_sample_outs/A006/vdj_t/filtered_contig_annotations.csv /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A012/outs/per_sample_outs/A012/vdj_t/filtered_contig_annotations.csv clonal_matching_output 6
+
+### make output for non-diabetes mice
+Rscript clone_pipeline_v2_no_diabetes_samps.R /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A013/outs/per_sample_outs/A013/vdj_t/filtered_contig_annotations.csv clonal_matching_output 7
+
+Rscript clone_pipeline_v2_no_diabetes_samps.R /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A014/outs/per_sample_outs/A014/vdj_t/filtered_contig_annotations.csv clonal_matching_output 8
+
+Rscript clone_pipeline_v2_no_diabetes_samps.R /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A015/outs/per_sample_outs/A015/vdj_t/filtered_contig_annotations.csv clonal_matching_output 9
+
+Rscript clone_pipeline_v2_no_diabetes_samps.R /n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A016/outs/per_sample_outs/A016/vdj_t/filtered_contig_annotations.csv clonal_matching_output 10
+
+
+
+
+```
+
+#Make sure we have all barcodes in output files. This is just QC to make sure all barcodes are in the output samples
+
+```{r}
+library(rjson)
+A001_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A001/outs/per_sample_outs/A001/vdj_t/cell_barcodes.json")
+A002_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A002/outs/per_sample_outs/A002/vdj_t/cell_barcodes.json")
+A003_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A003/outs/per_sample_outs/A003/vdj_t/cell_barcodes.json")
+A004_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A004/outs/per_sample_outs/A004/vdj_t/cell_barcodes.json")
+A005_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A005/outs/per_sample_outs/A005/vdj_t/cell_barcodes.json")
+A006_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A006/outs/per_sample_outs/A006/vdj_t/cell_barcodes.json")
+A007_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A007/outs/per_sample_outs/A007/vdj_t/cell_barcodes.json")
+A008_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A008/outs/per_sample_outs/A008/vdj_t/cell_barcodes.json")
+A009_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A009/outs/per_sample_outs/A009/vdj_t/cell_barcodes.json")
+A010_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A010/outs/per_sample_outs/A010/vdj_t/cell_barcodes.json")
+A011_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A011/outs/per_sample_outs/A011/vdj_t/cell_barcodes.json")
+A012_barcodes <- fromJSON(file = "/n/data1/joslin/icrb/kostic/zahir/tcell/cellranger_multi/A012/outs/per_sample_outs/A012/vdj_t/cell_barcodes.json")
+
+cmp_barcodes = function(myfile, barcode_vec,sampleNum) {
+  output_df = read.table(myfile,sep="\t",header=T)
+  output_df$barcode = gsub(paste("-",sampleNum,sep=""),"-1",output_df$barcode)
+  all.equal(sort(barcode_vec),sort(output_df$barcode))
+}
+
+cmp_barcodes(myfile="clonal_matching_output/pbmc_clone_matches_pool1.tsv",barcode_vec=A007_barcodes,7)
+cmp_barcodes(myfile="clonal_matching_output/pbmc_clone_matches_pool2.tsv",barcode_vec=A008_barcodes,8)
+cmp_barcodes(myfile="clonal_matching_output/pbmc_clone_matches_pool3.tsv",barcode_vec=A009_barcodes,9)
+cmp_barcodes(myfile="clonal_matching_output/pbmc_clone_matches_pool4.tsv",barcode_vec=A010_barcodes,10)
+cmp_barcodes(myfile="clonal_matching_output/pbmc_clone_matches_pool5.tsv",barcode_vec=A011_barcodes,11)
+cmp_barcodes(myfile="clonal_matching_output/pbmc_clone_matches_pool6.tsv",barcode_vec=A012_barcodes,12)
+
+cmp_barcodes(myfile="clonal_matching_output/islet_clone_matches_pool1.tsv",barcode_vec=A001_barcodes,1)
+cmp_barcodes(myfile="clonal_matching_output/islet_clone_matches_pool2.tsv",barcode_vec=A002_barcodes,2)
+cmp_barcodes(myfile="clonal_matching_output/islet_clone_matches_pool3.tsv",barcode_vec=A003_barcodes,3)
+cmp_barcodes(myfile="clonal_matching_output/islet_clone_matches_pool4.tsv",barcode_vec=A004_barcodes,4)
+cmp_barcodes(myfile="clonal_matching_output/islet_clone_matches_pool5.tsv",barcode_vec=A005_barcodes,5)
+cmp_barcodes(myfile="clonal_matching_output/islet_clone_matches_pool6.tsv",barcode_vec=A006_barcodes,6)
+
+```
