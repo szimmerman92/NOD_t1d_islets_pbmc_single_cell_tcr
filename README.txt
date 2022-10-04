@@ -17,9 +17,8 @@ Initial sequence processing in cellranger pipeline
 - B.Gene_expression_TCR_analysis
 Runs scripts to match TCRs in both islets and PBMCs from NOD mice
 
-- C.Pseudobulk_and_Trajectory_analysis
+- C.Pseudobulk_analysis
 Runs pseubulk analysis for differential expression of genes between matching cells in blood and islets.
-Run monocle3 analysis for trajectory inference.
 
 - D.MachineLearning
 Machine Learning analysis for Figure 4.
