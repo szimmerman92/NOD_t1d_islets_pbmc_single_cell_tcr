@@ -1,0 +1,1395 @@
+---
+title: "Nod analysis"
+output: pdf_document
+date: '2022-05-11'
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+https://github.com/szimmerman92/NOD_t1d_islets_pbmc_single_cell_tcr/tree/master/B.Gene_expression_TCR_analysis
+
+In this document we will analyze data collected for single cell analysis of T cells in diabetic and non diabetic NOD mice collected from pancreatic islets and blood.
+
+The first step is reading in the data.
+
+```{r}
+require(Seurat)
+obj <- readRDS(file = "/home//data/robbenm/NODsc/data/Integrated_allmergedsamples.rds")
+obj
+slotNames(obj)
+head(obj$nCount_RNA)
+head(obj$TCR)
+
+```
+
+Huge data set, we have 42,203 features (genes?) across 102,848 cells
+
+Since TCR is one of the most available features, let's take a look at the sequences I guess.
+
+```{r}
+
+countTCR <- rev(sort(table(obj$TCR[obj$TCR != "notcr"])))
+length(countTCR)
+hist(countTCR[countTCR > 1])
+sum(countTCR > 1)
+sum(countTCR == 2)
+sum(countTCR == 3)
+sum(countTCR > 3)
+max(countTCR)
+TCRabove <- countTCR[countTCR > 1]
+
+length(unique(obj$TCR))
+length(unique(obj$TCR.x))
+length(unique(obj$TCR.y)) #Looks like there is more likely problems with sequencing depth than there are with splitting tcr
+
+```
+
+It appears that most TCR clones have only 2 at most single cells that have been sequenced in here. But it does go all the way up to 75 meaning that there could be some cell differentiation going on in T cell clones that we have captured with sequencing. Let's see what the correlation is between cell type and TCR sequence.
+
+```{r}
+require(dplyr)
+require(heatmap2)
+require(pheatmap)
+require(gplots)
+clusters <- data.frame(Idents(obj))
+TCRseq <- data.frame(obj$TCR)
+TCRseq <- within(TCRseq,Cell <- rownames(TCRseq))
+TCRseq <- subset(TCRseq,obj.TCR != "notcr")
+TCRseq <- TCRseq[TCRseq$obj.TCR %in% names(TCRabove),]
+# So we have 10,172 cells with clonal TCR seqs lets add in cluster inforation and then run table by cluster number
+TCRseq.cluster <- within(TCRseq,Cluster <- paste('c',clusters[rownames(TCRseq),],sep=''))
+TCRseq.split <- split(TCRseq.cluster,TCRseq.cluster$Cluster)
+
+clus <- unique(TCRseq.cluster$Cluster)
+seq <- unique(TCRseq.cluster$obj.TCR)
+TCRheatmap <- data.frame(matrix(0, nrow = length(seq), ncol = length(clus)))
+rownames(TCRheatmap) <- seq
+colnames(TCRheatmap) <- clus
+for(i in clus) {
+  sub <- subset(TCRseq.cluster,Cluster == i)
+  tab <- data.frame(table(sub$obj.TCR))
+  for(p in 1:nrow(tab)) {
+    TCRheatmap[as.character(tab$Var1[p]),i] <- as.numeric(tab$Freq[p])
+  }
+  print(i)
+}
+
+# heatmap(as.matrix(TCRheatmap),main = "TCR by cluster")
+
+TCRHeat <- function(df) {
+  above <- names(table(df$TCR)[table(df$TCR) > 1])
+  df <- df[df$TCR %in% above,]
+  clus <- unique(df$Cluster)
+  seq <- unique(df$TCR)
+  TCRheatmap <- data.frame(matrix(0, nrow = length(seq), ncol = length(clus)))
+  rownames(TCRheatmap) <- seq
+  colnames(TCRheatmap) <- clus
+  for(i in clus) {
+    sub <- subset(df,Cluster == i)
+    tab <- data.frame(table(sub$TCR))
+    for(p in 1:nrow(tab)) {
+      TCRheatmap[as.character(tab$Var1[p]),i] <- as.numeric(tab$Freq[p])
+    }
+    print(i)
+  }
+  return(TCRheatmap)
+  rm(TCRheatmap)
+  gc()
+  # heatmap(as.matrix(TCRheatmap),main = main)
+}
+```
+
+We can also look at the x and y regions of the TCR, cause it's unbeknownst if there are shenanigans going on there.
+
+```{r}
+require(data.table)
+require(stringi)
+require(RColorBrewer)
+TCR.x <- obj$TCR.x
+TCR.y <- obj$TCR.y
+
+TCR.df <- data.frame(Cell = names(TCR.x),TCR.x = TCR.x, TCR.y = TCR.y,Sample = obj$mergedsampletype)
+TCR.df <- within(TCR.df,TCR <- obj$TCR)#strsplit(obj$TCR,by = "|")
+TCR.df <- within(TCR.df,Cluster <- paste('c',clusters[rownames(TCR.df),],sep=''))
+TCR.df <- cbind(TCR.df,rbindlist(lapply(stri_split(obj$TCR,regex = "\\|"),function(x) data.frame(split.x = x[1],split.y = x[2]))))
+TCR.df.final <- within(TCR.df, ID <- unlist(lapply(stri_split(TCR.df$Cell,regex = "_"),function(x) x[1])))
+nrow(TCR.df.final) #102848
+TCR.df.final <- TCR.df.final[!TCR.df.final$split.x %in% c("","notcr",NA) & !TCR.df.final$split.y %in% c("","notcr",NA),]
+nrow(TCR.df.final) #75284
+head(TCR.df.final)
+
+#Now let's see if we can get the true TCR/ if any are reverse.
+TCR.df.final <- within(TCR.df.final, Reverse <- paste(split.y,"|",split.x,sep=""))
+#it seems that there are no copies in reverse so let's just do the 
+head(TCR.df.final)
+
+TCRabove <- names(table(TCR.df.final$TCR)[table(TCR.df.final$TCR) > 1])
+
+cleanhm <- TCRHeat(TCR.df.final)
+heatmap.2(as.matrix(cleanhm),scale = "row",trace = "none",main = "TCR by cluster clean",srtCol = 45,margins = c(7,1))
+
+```
+
+Okay, it is looking pretty much the same after some cleaning, now lets look at a heatmap of each source of tissue
+
+```{r}
+require(ggplot2)
+Samples <- c(paste("A00",1:9,sep=""),paste("A0",10:16,sep=""))
+Tissue <- c(rep("islets",6),rep("pbmc",10))
+Diab <- c(rep(T,6),rep(T,6),rep(F,4))
+SampleTable <- data.frame(Samples = Samples, Tissue = Tissue,Diabetes = Diab)
+
+isletcells <- SampleTable[SampleTable$Tissue == "islets",]$Samples
+pbmct1dcells <- SampleTable[SampleTable$Tissue == "pbmc" & SampleTable$Diabetes == T,]$Samples
+pbmcnoncells <- SampleTable[SampleTable$Tissue == "pbmc" & SampleTable$Diabetes == F,]$Samples
+
+nrow(subset(TCR.df.final,ID %in% isletcells))#21,283 islet cells
+nrow(subset(TCR.df.final,ID %in% pbmct1dcells))#32,163 pbmc diabetic cells
+nrow(subset(TCR.df.final,ID %in% pbmcnoncells))#21,838 islet cells
+
+
+islethm <- TCRHeat(subset(TCR.df.final,ID %in% isletcells))
+pbmchm <-TCRHeat(subset(TCR.df.final,ID %in% c(pbmct1dcells,pbmcnoncells)))
+pbmct1dhm <-TCRHeat(subset(TCR.df.final,ID %in% pbmct1dcells))
+pbmcnonhm <-TCRHeat(subset(TCR.df.final,ID %in% pbmcnoncells))
+
+# par(mfrow = c(2,2))
+heatmap(as.matrix(islethm),main = "TCR by cluster-islets")
+heatmap(as.matrix(pbmchm),main = "TCR by cluster-pbmc")
+heatmap(as.matrix(pbmct1dhm),main = "TCR by cluster-pbmc diabetic")
+heatmap(as.matrix(pbmcnonhm),main = "TCR by cluster-pbmc non-diabetic")
+# par(mfrow = c(1,1))
+
+
+heatmap.2(as.matrix(islethm),scale = "row",trace = "none",main = "TCR by cluster-islets",srtCol = 45,margins = c(7,1))
+heatmap.2(as.matrix(pbmchm),scale = "row",trace = "none",main = "TCR by cluster-pbmc",srtCol = 45,margins = c(7,1))
+heatmap.2(as.matrix(pbmct1dhm),scale = "row",trace = "none",main = "TCR by cluster-pbmc diabetic",srtCol = 45,margins = c(7,1))
+heatmap.2(as.matrix(pbmcnonhm),scale = "row",trace = "none",main = "TCR by cluster-pbmc non-diabetic",srtCol = 45,margins = c(7,1))
+```
+
+
+Lets do some extra marker stuff.
+
+https://onlinelibrary.wiley.com/doi/10.1002/cyto.a.23724
+
+```{r}
+
+DimPlot(obj, reduction = "umap",label = T)
+
+# mark <- FindMarkers(obj, ident.1 = 2, min.pct = 0.25)
+# allmark <- FindAllMarkers(obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+# write.csv(allmark,file = "~/LuberLab/Nodmice/Markers/allMarkers_base.csv",sep = ",",quote = F)
+allmark <- read.table(file = "~/LuberLab/Nodmice/Markers/allMarkers_base.csv",header = T,sep = ",",stringsAsFactors = F)
+effector <- readLines(con = "~/LuberLab/Nodmice/Markers/EffectorGenes")
+tab <- readLines(con = "~/LuberLab/Nodmice/Markers/abgenes")
+
+clus <- subset(allmark,cluster == 4)$gene
+clus[grep("Cd4",clus)]
+clus[grep("Cd8a",clus)]
+lapply(effector,function(x) paste(x,": ",clus[agrep(x,clus,ignore.case = T)],sep = ""))
+lapply(tab,function(x) paste(x,": ",clus[agrep(x,clus,ignore.case = T)],sep = ""))
+# for (i in 0:10){
+  # marker_i <- FindConservedMarkers(obj, ident.1 = 1, grouping.var = "sampletype", verbose =TRUE)
+
+
+#Looks like this split object function can be used if we want to analyze only one tissue or something.
+# If we predict markers for clusters in different tissues, they should be the same between cluster but only do that when you have the time.
+# bm280k.list <- SplitObject(bm280k, split.by = "orig.ident")
+
+
+
+```
+
+Now cluster T cells using hierarchical clustering method
+```{r}
+
+# Ward Hierarchical Clustering
+d <- dist(cleanhm, method = "euclidean") # distance matrix
+fit <- hclust(d, method="ward")
+plot(fit,labels = F) # display dendogram
+groups <- cutree(fit, k=10) # cut tree into 5 clusters
+# draw dendogram with red borders around the 5 clusters
+rect.hclust(fit, k=10, border="red")
+
+htmp <- within(TCR.df.umap,Group <- groups[TCR.df.umap$TCR])
+p <- ggplot(htmp,aes(x =UMAP_1,y = UMAP_2,colour = Cluster)) +
+  geom_point() +
+  labs(title = "Group: {closest_state}") +
+  shadow_mark(alpha = 0.1, size = 1,past = T, future = T) +
+  # ggrastr::geom_point_rast(size=0.1, alpha=0.1) + #Do once dependency for ggrastr is installed
+  transition_states(Group,transition_length = 2,state_length = 1)
+animate(p, duration = 55)
+anim_save("finalhclust10.gif", animation = last_animation(), path = "~/LuberLab/Nodmice/Figures/")
+
+#with groups cut at 10 we can see specific groups of differentiating cells that can be further analyzed.
+```
+
+
+
+```{r}
+sapply(grep("res",colnames(obj@meta.data),value = TRUE),
+       function(x) length(unique(obj@meta.data[,x])))
+# obj <- RunTSNE(
+#   object = obj,
+#   reduction.use = "pca",
+#   dims.use = 1:16,
+#   do.fast = TRUE)
+head(htmp)
+ggplot(htmp,aes(x =UMAP_1,y = UMAP_2,colour = Cluster)) +
+  geom_point() +
+  facet_wrap(~Sample)
+p <- ggplot(htmp,aes(x =UMAP_1,y = UMAP_2,colour = Cluster)) +
+  geom_point() +
+  labs(title = "Group: {closest_state}") +
+  shadow_mark(alpha = 0.1, size = 1,past = T, future = T) +
+  # ggrastr::geom_point_rast(size=0.1, alpha=0.1) + #Do once dependency for ggrastr is installed
+  transition_states(Sample)
+animate(p)
+anim_save("Sample.gif", animation = last_animation(), path = "~/LuberLab/Nodmice/Figures/")
+```
+
+##Gene co expression
+Lets start on the gene expression / 
+
+
+https://ucdavis-bioinformatics-training.github.io/2019-single-cell-RNA-sequencing-Workshop-UCD_UCSF/
+
+
+First lets filter some stuff
+```{r}
+# obj <- subset(obj, percent.mt <= 10)
+# obj <- subset(obj, nCount_RNA >= 500 & nCount_RNA <= 20000)
+# obj #got rid of about 400 cells
+# FilterGenes <-
+#  function (object, min.value=1, min.cells = 0, genes = NULL) {
+#    genes.use <- rownames(object)
+#    if (!is.null(genes)) {
+#      genes.use <- intersect(genes.use, genes)
+#      object@data <- GetAssayData(object)[genes.use, ]
+#    } else if (min.cells > 0) {
+#      num.cells <- Matrix::rowSums(GetAssayData(object) > min.value)
+#      genes.use <- names(num.cells[which(num.cells >= min.cells)])
+#      object = object[genes.use, ]
+#    }
+#   object <- LogSeuratCommand(object = object)
+#   return(object)
+# }
+# 
+# obj <- FilterGenes(object = obj, min.value = 1, min.cells = 400)
+# obj #Cut genes in half, this is good, not sure if I want more stringent filters.
+```
+
+
+```{r}
+require(WGCNA)
+require(tidyr)
+#check filtering
+
+# options(stringsAsFactors = F)
+# datExpr <- GetAssayData(obj)#[,rownames(TCR.df.final)]#VariableFeatures(obj)]  # only use variable genes in analysis, it appears that all genes are too big to include
+# nrow(datExpr)
+# datExpr <- datExpr[apply(datExpr,1,function(x) sum(as.numeric(x))) > 100,]
+# # 
+# dat <- t(as.matrix(datExpr))
+
+# net <- blockwiseModules(dat, power = 10,
+#   corType = "bicor", # use robust correlation
+# 	networkType = "signed", minModuleSize = 10,
+# 	reassignThreshold = 0, mergeCutHeight = 0.15,
+# 	numericLabels = F, pamRespectsDendro = FALSE,
+# 	saveTOMs = TRUE,
+# 	saveTOMFileBase = "TOM",
+# 	verbose = 3)
+
+#read in the TOM 
+load("~/LuberLab/Nodmice/Modules/TOM.Rdata")
+TOM[1:10,1:10]
+# dat <- t(make_matrix(datExpr))
+# dat <-  dat[,-as.numeric(which(colSums(dat) < 1))]
+genenames <- colnames(dat)
+colnames(TOM) <- genenames
+rownames(TOM) <- genenames
+
+plotDendroAndColors(geneTree, dynamicColors, "Dynamic Tree Cut",
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05)
+
+modules <- read.table(file = "~/LuberLab/Nodmice/Modules/module_color.tsv",header = T,sep = "\t",stringsAsFactors = F)
+modules <- subset(modules, Module != "grey")
+table(modules$Module)
+modulesExpr <- cbind(modules, datExpr[modules$Gene,])
+modulesExpr[1:10,1:10]
+dim(modulesExpr)
+heatmap(as.matrix(modulesExpr[,-c(1,2)]))
+# modulesExprlong <- modulesExpr %>% gather(Cell, Count, -Module, -Gene)
+
+ggplot(subset(modulesExprlong,Module == "green"),aes(x = Cell,y = Count)) +
+  geom_boxplot() +
+  # facet_wrap(~Module) +
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1, size = 5)) +
+  guides(color = FALSE, size = FALSE)
+
+
+```
+
+
+Lets also do simple clustering by count data
+
+```{r}
+VariableFeaturePlot(obj)
+top <- VariableFeatures(obj)
+over <- names(rev(sort(table(TCR.df.final$TCR)[table(TCR.df.final$TCR) > 1])))
+mat <- as.matrix(datExpr[top,])
+
+# heatmap(mat,main = "Cell by gene")
+mat <- mat %>% 
+  # transpose the matrix so genes are as columns
+  scale() %>% 
+  # apply scalling to each column of the matrix (genes)
+  t()
+mat_hclust <- hclust(mat, method = "complete")
+
+# The default `plot()` function can be used to produce a simple dendrogram
+plot(gene_hclust, labels = FALSE)
+abline(h = 10, col = "brown", lwd = 2)
+```
+
+##Reclustering
+We can also try running the PCA and clustering based upon only the immunologically important marker genes, this should get rid of variance in the clustering.
+
+What we will do is that we will start by first clustering with t cell specific markers and then we can try to subcluster to identify more variability.
+
+```{r}
+features <- rownames(GetAssayData(obj))
+sort(features[agrep("tbet",features)])
+imm_mark <- read.csv(file = "~/LuberLab/Nodmice/Markers/ImmunemarkersSheet2.csv")
+
+
+obj <- RunPCA(obj,features = imm_mark$Gene)
+DimPlot(obj,reduction = "pca")
+ElbowPlot(obj,reduction = "pca")
+obj <- FindNeighbors(obj,reduction = "pca",dims = c(1:10))
+obj <- FindClusters(obj,resolution = seq(0.25,4,0.25))
+sapply(grep("res",colnames(obj@meta.data),value = TRUE),
+       function(x) length(unique(obj@meta.data[,x])))
+
+
+# unique(obj$RNA_snn_res.0.5)
+obj <- RunUMAP(obj,reduction = "pca",dims = 1:10)
+DimPlot(obj,reduction = "umap",label = T,group.by="RNA_snn_res.4")
+#Now we have 12 clusters and we can analyze the if these clusters are better than the other.
+#Looks like 1.25 is the best of the seurat clusters
+obj@meta.data <- within(obj@meta.data,mysclust <- obj@meta.data$RNA_snn_res.1.25)
+Idents(obj) <- "mysclust"
+
+```
+
+```{r}
+require(data.table)
+require(ggplot2)
+require(ggpubr)
+
+getMarkers <- function(mdf,idf,num = 1,printdf = T) {
+  variance <- data.frame()
+  for (i in (unique(mdf$cluster))) {
+    clus <- subset(mdf, cluster == i)$gene
+    sub <- subset(idf,Gene %in% clus)
+    print(paste("cluster ",i," matches:",sep=""))
+    c <- cbind(sub[,1],sub[,c(colSums(sub[,2:ncol(sub)],na.rm = T) > num)],sub[,25:ncol(sub)])# (nrow(sub)*0.5))],sub[,25:29])
+    if (printdf) {print(c)}
+    t <- names(which(colSums(sub[,2:ncol(sub)],na.rm = T) == max(colSums(sub[,2:ncol(sub)],na.rm = T))))
+    print(paste("max match: ",max(colSums(sub[,2:ncol(sub)],na.rm = T))," out of ",nrow(sub)," genes, for ",
+                paste(t,collapse = " "),
+                collapse = ""))
+                #names(which.max(colSums(sub[,2:ncol(sub)],na.rm = T))),sep=""))
+    variance <- rbind(variance,data.frame( Var = max(colSums(sub[,2:ncol(sub)],na.rm = T)) / nrow(sub),
+                                           Num = length(t)))
+  }
+  return(variance)
+}
+
+get_hist <- function(p) {
+    d <- ggplot_build(p)$data[[1]]
+    data.frame(x = d$x, xmin = d$xmin, xmax = d$xmax, y = d$y)
+}
+
+all1var <- getMarkers(allmark,imm_mark[,-c(17,23)],num = 1, printdf = F)
+hist(all1var$Var / all1var$Num)
+# immunomark <- FindAllMarkers(obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+# write.csv(immunomark,file = "~/LuberLab/Nodmice/Markers/immunoMarkers_.5res.csv",sep = ",",quote = F)
+immunomark <- read.csv(file = "~/LuberLab/Nodmice/Markers/immunoMarkers_.5res.csv")
+imm1var <- getMarkers(immunomark,imm_mark[,-c(17,23)],num = 1,printdf = F)
+hist(imm1var$Var / imm1var$Num)
+
+
+
+# collist <- as.list(c(6,25,26:ncol(obj@meta.data)))
+# names(collist) <- colnames(obj@meta.data[,c(6,25,26:ncol(obj@meta.data))])
+collist <- as.list(colnames(obj@meta.data[,c(5,25,26:ncol(obj@meta.data))]))
+
+# Idents(obj) <- collist[[1]]
+# tmpmark <- FindAllMarkers(obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25,features = imm_mark$Gene)
+# 
+# tmpfunc <- function(object,name,genes) {
+#   Idents(object) <- name
+#   tmp <- FindAllMarkers(obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25,features = genes)
+#   return(tmp)
+# }
+
+# marklist <- lapply(collist,function(x) tmpfunc(obj,x,imm_mark$Gene))
+#Run through the clusters generated and generate the metrics for each one to compare
+marklist <- list()
+
+for (x in 1:length(collist)) {
+  name <- collist[[x]]
+  Idents(obj) <- name
+  df <- FindAllMarkers(obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25,features = imm_mark$Gene)
+  # head(df)
+  marklist[[x]] <- df
+  print(paste(x,"  out of ",length(collist)))
+}
+
+metrics <- lapply(marklist,function(x) getMarkers(x,imm_mark[,-c(17,23)],num = 1,printdf = F))
+names(metrics) <- unlist(collist)
+
+# ggplot(rbindlist(metrics,use.names = T,idcol = "Cluster"),aes(x =  Var,color = Cluster))+
+#   geom_density()
+# ggplot(rbindlist(metrics,use.names = T,idcol = "Cluster"),aes(x =  Num,color = Cluster))+
+#   geom_density()
+# ggplot(rbindlist(metrics,use.names = T,idcol = "Cluster"),aes(x =  Var/Num,color = Cluster))+
+#   geom_density()
+
+a <- ggplot(rbindlist(metrics,use.names = T,idcol = "Cluster"),aes(y =  Var,x = Cluster,fill = Cluster))+
+  geom_violin() +
+  theme(axis.text.x = element_text(angle = 45,hjust = 1))
+b <- ggplot(rbindlist(metrics,use.names = T,idcol = "Cluster"),aes(y =  Num,x = Cluster,fill = Cluster))+
+  geom_violin() +
+  theme(axis.text.x = element_text(angle = 45,hjust = 1))
+c <- ggplot(rbindlist(metrics,use.names = T,idcol = "Cluster"),aes(y =  Var/Num,x = Cluster,fill = Cluster))+
+  geom_violin() +
+  theme(axis.text.x = element_text(angle = 45,hjust = 1))
+ggarrange(a,b,c,labels = c("A","B","C"),nrow = 3)
+
+#according to the results it looks like"RNA_snn_res.1.25" is the "best" so lets look at it.
+# exclude <- c("CD69","Prtprc")
+# getMarkers(marklist[[6]],imm_mark[,-c(17,23)],num = 1) 
+
+
+# DotPlot(obj, features = imm_mark$Gene) + RotatedAxis()
+# DimPlot(obj,reduction = "umap",label = T,raster = F)
+```
+
+
+Maybe something I could do, is partition based on every gene and every cell. Then I could choose the genes that I would like to partition by and separate out cells by these partitions.
+
+rcellmarker
+
+
+##Double negative stuff 
+
+```{r}
+Idents(obj) <- collist[[6]]
+# DoHeatmap(object = obj, features = imm_mark$Gene,raster = T) 
+FeaturePlot(obj,imm_mark$Gene[c(1:3,41)],cols = c("lightgrey", "blue"),label = T)
+
+datExpr <- GetAssayData(obj)[imm_mark$Gene[1:3],]
+noCD <- colnames(datExpr[,which(datExpr[1,] < 0.1 & datExpr[2,] < 0.1 & datExpr[3,] < 0.1)])
+plot(x = obj@meta.data$nCount_RNA, datExpr[3,])
+hist(obj@meta.data[noCD,]$nCount_RNA)
+hist(obj@meta.data$nCount_RNA)
+#WTF there are 31,918 (31%) cells in which there is no expression of CD4 or CD8 and it has no correlation with general expression
+#So these are apparently DN T cells which should only make up ~3-5% of the periphery cells
+
+#Are they specific to place/disease type?
+ggplot(obj@meta.data[noCD,],aes(x = sampletype)) +
+         geom_histogram(stat = "count")
+
+#It seems that they are specific to t1d which is amazing but what about normalized
+table(obj@meta.data[noCD,]$Matching_pre_filter)/table(obj@meta.data$Matching_pre_filter)
+#Not really connected to any parameter maybe expansion?
+rev(sort(table(obj@meta.data[noCD,]$TCR)))
+
+# exclude <- c("")
+```
+
+Lets label our cells with Single R and the Monaco immune data set
+
+https://www.singlecellcourse.org/single-cell-rna-seq-analysis-using-seurat.html
+
+```{r}
+require(SingleR)
+monaco.ref <- celldex::MonacoImmuneData()
+sce <- as.SingleCellExperiment(DietSeurat(obj))
+sce
+monaco.fine <- SingleR(test = sce,assay.type.test = 1,ref = monaco.ref,labels = monaco.ref$label.fine)
+table(monaco.fine$pruned.labels)
+
+#clustering by 
+```
+
+Now lets get stepwise stuff
+
+```{r}
+#First do the CD4/CD8
+require(ggplot2)
+datExpr <- GetAssayData(obj)[imm_mark$Gene[1:3],]
+datExpr <- rbind(datExpr,datExpr[1,] + datExpr[3,])
+CD4_8 <- rownames(obj@meta.data)
+CD4_8[which(datExpr[4,] <= 0.1 & datExpr[2,] >= 0.1)] <- "CD4"
+CD4_8[which(datExpr[4,] >= 0.1 & datExpr[2,] <= 0.1) ] <- "CD8"
+CD4_8[which(datExpr[4,] <= 0.1 & datExpr[2,] <= 0.1) ] <- "DN"
+CD4_8[which(datExpr[4,] >= 0.1 & datExpr[2,] >= 0.1) ] <- "DP"
+CD4_8[which(colSums(GetAssayData(obj)[c("Trdv1","Trdv2-1","Trdv3","Trdj1"),] > 0.25) > 0)] <- "GDcells"
+rev(sort(table(CD4_8)))
+obj@meta.data <- within(obj@meta.data, cd4_8 <- CD4_8)
+DimPlot(obj,group.by = "cd4_8")
+
+
+
+ggplot(obj@meta.data,aes(x = cd4_8, fill = cd4_8)) +
+  geom_histogram(stat = "count") +
+  facet_wrap(~mergedsampletype,scales = "free")
+#Equal representation of cell types accross tissue/batches
+ggplot(obj@meta.data,aes(x = cd4_8, fill = cd4_8)) +
+  geom_histogram(stat = "count") +
+  facet_wrap(~RNA_snn_res.1.25,scales = "free")
+#not equal rep across clusters
+ggplot(obj@meta.data,aes(x = cd4_8, fill = cd4_8)) +
+  geom_histogram(stat = "count") +
+  facet_grid(~Matching_pre_filter,scales = "free")
+
+#Lets also plot CD44 (Pgp) against CD25 (Il2ra) for DN cells
+tmp <- GetAssayData(obj)[c("Il2ra","Pgp"),rownames(obj@meta.data[obj@meta.data$cd4_8 == "DN",])]
+plot(x = tmp[1,], y =tmp[2,],xlab = "CD25",ylab = "CD44")
+DNtype <- colnames(tmp)
+DNtype[which(tmp[2,] >= 0.1 & tmp[1,] <= 0.1)] <- "DN1"
+DNtype[which(tmp[2,] >= 0.1 & tmp[1,] >= 0.1)] <- "DN2"
+DNtype[which(tmp[2,] <= 0.1 & tmp[1,] >= 0.1)] <- "DN3"
+DNtype[which(tmp[2,] <= 0.1 & tmp[1,] <= 0.1)] <- "DN4"
+rev(sort(table(DNtype)))
+hist(GetAssayData(obj)[c("Traj7"),rownames(obj@meta.data[obj@meta.data$cd4_8 == "DN",])])#Not expressing any TCR?
+#So the majority of these DN cells are DN4, which means that they leave VDJ recombination and but they do not gain the double positive and are allowed out into the periphery instead of being killed in the thymus
+
+#Jacob also wants to look at if there is anything funky with the TCR of the DNs
+TCR <- obj@meta.data$TCR
+TCR[TCR.df$split.x == ""] <- "beta_chain_only"
+TCR[TCR.df$split.y == ""] <- "alpha_chain_only"
+TCR[grep(".*,.*",TCR.df$split.x)] <- "double_alpha"
+TCR[grep(".*,.*",TCR.df$split.y)] <- "double_beta"
+TCR[intersect(grep(".*,.*",TCR.df$split.x),grep(".*,.*",TCR.df$split.y))] <- "double_both"
+TCR[!TCR %in% c("beta_chain_only","alpha_chain_only","double_alpha","double_beta","double_both","notcr")] <- "normal_tcr"
+TCR.chain <- TCR
+tmpmd <- within(obj@meta.data, Polychain <- TCR.chain)
+ggplot(subset(tmpmd,Polychain != "normal_tcr"),aes(x = cd4_8, fill = Polychain)) +
+  geom_histogram(stat = "count",position = "dodge")
+
+
+ggplot(subset(tmpmd,Polychain != "normal_tcr"),aes(x = RNA_snn_res.1.25, fill = sampletype)) +
+  geom_histogram(stat = "count",position = "dodge")
+
+```
+
+
+Let's try to cluster using scpred instead of  base Seurat
+
+Lets do simlr/cidr
+
+```{r}
+require(SIMLR)
+require(cidr)
+# sData <- scDataConstructor(as.matrix(GetAssayData(obj)[imm_mark$Gene,]))
+# sData <- determineDropoutCandidates(sData)
+# sData <- wThreshold(sData)
+# sData <- scDissim(sData)
+# sData <- scPCA(sData)
+# sData <- nPC(sData)
+# nCluster(sData)
+# sData <- scCluster(sData)
+# plot(sData@PC[,c(1,2)], col=cols,
+#       pch=sData@clusters, main="CIDR", xlab="PC1", ylab="PC2")
+rm(sData)
+
+```
+
+no, try
+
+Lets also try to cluster using SC3
+
+```{r}
+require(SingleCellExperiment)
+require(scater)
+require(SC3)
+make_matrix <- function(mat){
+
+  tmp <- matrix(data=0L, nrow = mat@Dim[1], ncol = mat@Dim[2])
+
+  row_pos <- mat@i+1
+  col_pos <- findInterval(seq(mat@x)-1,mat@p[-1])+1
+  val <- mat@x
+
+  for (i in seq_along(val)){
+      tmp[row_pos[i],col_pos[i]] <- val[i]
+  }
+
+  row.names(tmp) <- mat@Dimnames[[1]]
+  colnames(tmp) <- mat@Dimnames[[2]]
+  return(tmp)
+}
+# sce <- runPCA(sce)
+# plotPCA(sce, colour_by = "RNA_snn_res.1.25")
+# counts(sce) <- make_matrix(GetAssayData(obj))
+# rowData(sce)$feature_symbol <- rownames(GetAssayData(obj))
+# 
+# sce <- sc3(sce, ks = 8:30, biology = TRUE,n_cores = 32)
+# counts(sce) <- GetAssayData(obj)
+```
+
+rcellmarker
+
+```{r}
+require(rcellmarker)
+# res <- cellMarker(obj,type='seurat',species='mouse',keytype='SYMBOL',weight=1) #weight for avg_logFC
+res<-cells(subset(marklist[[6]],cluster == 11)$gene,species = "mouse",keytype ="SYMBOL")
+res
+```
+
+
+practice with the monocle3
+
+
+According to this paper, https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02622-0, monocle is able to cluster the best so first let us try clustering with monocle3.
+
+
+```{r}
+library(scCCESS)
+library(SIMLR)
+
+# data(sce, package = 'scCCESS')
+dat= as.matrix(make_matrix(counts(sce)))#GetAssayData(obj)))
+
+k = estimate_k(dat,
+               seed = 1, 
+               cluster_func = function(x,centers) {
+                 set.seed(42);
+                 SIMLR_Large_Scale(t(x), c=centers,kk=15)
+               },
+               criteria_method = "NMI",
+               krange = 5:15, ensemble_sizes = 10,
+               cores = 64
+)
+
+
+cluster = ensemble_cluster(dat, 
+                          seed = 1, 
+                          cluster_func = function(x) {
+                            set.seed(1)
+                            SIMLR_Large_Scale(t(x), c=k,kk=15)
+                          }, 
+                          cores = 64, 
+                          genes_as_rows = T, 
+                          ensemble_sizes = 10, 
+                          verbose = 0, 
+                          scale = F, 
+                          batch_size = 64
+)
+
+####Successkmeans#########################################
+dat=prefilter(dat)
+k = estimate_k(dat,
+               seed = 1, 
+               cluster_func = function(x,centers) { 
+                 set.seed(42);
+                 kmeans(x, centers)
+               },
+               criteria_method = "NMI",
+               krange = 5:15, ensemble_sizes = 10,
+               cores = 64
+)
+
+cluster = ensemble_cluster(dat, 
+                          seed = 1, 
+                          cluster_func = function(x) {
+                            set.seed(1)
+                            kmeans(x, centers = k)
+                          }, 
+                          cores = 64, 
+                          genes_as_rows = T, 
+                          ensemble_sizes = 10, 
+                          verbose = 0, 
+                          scale = F, 
+                          batch_size = 64
+)
+
+```
+
+Monocle3 clustering of original data
+
+```{r}
+require(monocle3)
+library(SeuratWrappers)
+cds <- as.cell_data_set(obj)
+rowData(cds)$gene_short_name <- rownames(GetAssayData(obj))
+cds <- reduce_dimension(cds)
+plot_cells(cds,genes = c("Cd4","Cd8a","Cd8b1","Foxo4"))
+#Monocle is even worse I need to find a way to 
+plot_cells(cds, color_cells_by="sampleid", label_cell_groups=FALSE)
+cds <- cluster_cells(cds, resolution=1e-5)
+plot_cells(cds)
+#So that did 16 clusters
+#We can look at top markers in each###############################
+marker_test_res <- top_markers(cds, group_cells_by="partition", 
+                               reference_cells=1000, cores=64)
+top_specific_markers <- marker_test_res %>%
+                            filter(fraction_expressing >= 0.10) %>%
+                            group_by(cell_group) %>%
+                            top_n(3, pseudo_R2)
+
+top_specific_marker_ids <- unique(top_specific_markers %>% pull(gene_id))
+plot_genes_by_group(cds,
+                    top_specific_marker_ids,
+                    group_cells_by="partition",
+                    ordering_type="maximal_on_diag",
+                    max.size=3)
+cds <- learn_graph(cds)
+plot_cells(cds,
+           color_cells_by = "cluster",
+           label_groups_by_cluster=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE)
+cds <- order_cells(cds)
+plot_cells(cds,
+           color_cells_by = "pseudotime",
+           label_cell_groups=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=1.5)
+
+
+```
+
+#weighted PCA
+
+So the problem is that we are washing out the good variance that will actually differentiate cell type, maybe I can try doing some sort of progressive hierarchical PCA that can do certain genes at a time and combine the PCs
+
+```{r}
+#Let's start by looking at only the CD principle components.
+
+obj <- RunPCA(obj,features = imm_mark$Gene)
+DimPlot(obj,reduction = "pca")
+ElbowPlot(obj,reduction = "pca")
+FeaturePlot(obj,imm_mark$Gene[c(1:3,41)],reduction = "pca",cols = c("lightgrey", "blue"),label = F)
+
+
+# unique(obj$RNA_snn_res.0.5)
+obj <- RunUMAP(obj,reduction = "pca",dims = 1:2)
+DimPlot(obj,reduction = "umap",label = T,group.by="seurat_clusters")
+FeaturePlot(obj,imm_mark$Gene[c(1:3,41)],cols = c("lightgrey", "blue"),label = F)
+
+plot(GetAssayData(obj)[imm_mark$Gene[3],],GetAssayData(obj)[imm_mark$Gene[2],])
+
+#Now run with CD at 100x importance
+cdpr <- prcomp(x = GetAssayData(obj)[imm_mark$Gene[c(rep(1:3,each = 100),4:nrow(imm_mark))],])
+obj[["pca"]] <- CreateDimReducObject(embeddings = cdpr$rotation,stdev = cdpr$sdev,key = "PCA_", assay = DefaultAssay(obj))
+DimPlot(obj,reduction = "pca")
+ElbowPlot(obj,reduction = "pca")
+obj <- RunUMAP(obj,reduction = "pca",dims = 1:5)
+DimPlot(obj,reduction = "umap",label = T,group.by="mysclust")
+FeaturePlot(obj,c(imm_mark$Gene[c(1:3)],"Trdv1"),cols = c("lightgrey", "blue"),label = F)
+#Okay, coolzyax well that at least separated out the DN cells which is baller, let's try making a couple of other adj too,first at 10x importance.
+cdpr <- prcomp(x = GetAssayData(obj)[imm_mark$Gene[c(rep(1:3,each = 10),4:nrow(imm_mark))],])
+obj[["pca"]] <- CreateDimReducObject(embeddings = cdpr$rotation,stdev = cdpr$sdev,key = "PCA_", assay = DefaultAssay(obj))
+DimPlot(obj,reduction = "pca")
+ElbowPlot(obj,reduction = "pca")
+obj <- RunUMAP(obj,reduction = "pca",dims = 1:10)
+DimPlot(obj,reduction = "umap",label = T,group.by="mysclust")
+FeaturePlot(obj,c(imm_mark$Gene[c(1:3)],"Trdv1"),cols = c("lightgrey", "blue"),label = F)
+#10x importance for the cd4 gives us better within sep while preserving CD4/CD8 specific clusterings. Now let us try increaseing the importance of some other genes
+x10 <- imm_mark$Gene[c(rep(1:3))]
+# x5 <- c("Ncam1","Pecam1","Cd27","Cd28","Ccr7","Sell","Ctla4","Il21","Il10","Il2")
+x5 <- imm_mark$Gene[!imm_mark$Gene %in% x10]
+cdpr <- prcomp(x = GetAssayData(obj)[c(rep(x10,each = 10),x5),])#rep(x5,each = 5),imm_mark$Gene[!imm_mark$Gene %in% c(x10,x5)]),])
+obj[["pca"]] <- CreateDimReducObject(embeddings = cdpr$rotation,stdev = cdpr$sdev,key = "PCA_", assay = DefaultAssay(obj))
+DimPlot(obj,reduction = "pca")
+ElbowPlot(obj,reduction = "pca")
+obj <- RunUMAP(obj,reduction = "pca",dims = 1:10)
+DimPlot(obj,reduction = "umap",label = T,group.by="RNA_snn_res.1.5",raster = F)
+FeaturePlot(obj,c(imm_mark$Gene[c(1:3)],"Trdv1"),cols = c("lightgrey", "blue"),label = F)
+#Cool so we now have what looks like 100's of clusters maybe I can try one of the larger cluster sizes on it
+DimPlot(obj,reduction = "umap",label = T,group.by="RNA_snn_res.3.5")
+###########################################################
+#NVM but I do want to try adding all of the other genes too, to see if it smoothes things out a bit.
+fnames <- VariableFeatures(obj)[1:200]
+# vec <- c(rep(x10,each = 10),rep(x5,each = 5),rep(imm_mark$Gene[!imm_mark$Gene %in% c(x10,x5)],each = 2),fnames[!fnames %in% imm_mark$Gene])
+vec <- c(rep(x10,each = 20),rep(imm_mark$Gene[!imm_mark$Gene %in% c(x10)],each = 10),fnames[!fnames %in% imm_mark$Gene])
+cdpr <- prcomp(x = GetAssayData(obj)[vec,])
+obj[["pca"]] <- CreateDimReducObject(embeddings = cdpr$rotation,stdev = cdpr$sdev,key = "PCA_", assay = DefaultAssay(obj))
+DimPlot(obj,reduction = "pca")
+ElbowPlot(obj,reduction = "pca")
+obj <- RunUMAP(obj,reduction = "pca",dims = 1:10)
+DimPlot(obj,reduction = "umap",label = T,group.by="RNA_snn_res.1.5",raster = F)
+FeaturePlot(obj,c(imm_mark$Gene[c(1:3)],"Il7r"),cols = c("lightgrey", "blue"),label = F)
+DimPlot(obj,reduction = "umap",label = F,group.by="cd4_8",raster = F)
+DimPlot(obj,reduction = "umap",label = F,group.by="Seurat_clusters",raster = F)
+FeaturePlot(obj,c(imm_mark$Gene[c(1:2)],"Foxp3","Il7r"),cols = c("lightgrey", "blue"),label = T,raster = F) ####Query the DN1-4 using CD44 and CD25
+#These are mostly DN4 cells, they are AB+CD4-CD8-Nk1.1-
+
+#Here we make new clusters at 1.25 res to see if new PCA affects it
+obj <- FindNeighbors(obj,reduction = "pca",dims = c(1:8))
+obj <- FindClusters(obj,resolution = 1.25)
+DimPlot(obj,reduction = "umap",label = T,group.by="RNA_snn_res.1.25",raster = F)
+Idents(obj) <- "RNA_snn_res.1.25"
+Newmark <- FindAllMarkers(obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25,features = imm_mark$Gene[-9])
+getMarkers(Newmark,imm_mark[,-c(17,23,25)],num = 1,printdf = T)
+```
+
+Theory:
+increased DN because can't regulate reduce the ability to mature the right cells that prevent autoimmune diabetes. This is why DN treatment rescues.
+
+I guess we can go with the 10x, 5x, 100x which keeps the best separation without muddying things. So let us do the same as before, evaluating different resolutions using this PCA. 
+
+```{r}
+x10 <- imm_mark$Gene[c(rep(1:3))]
+# x5 <- c("Ncam1","Pecam1","Cd27","Cd28","Ccr7","Sell","Ctla4","Il21","Il10","Il2")
+x5 <- imm_mark$Gene[!imm_mark$Gene %in% x10]
+fnames <- VariableFeatures(obj)[1:200]
+vec <- c(rep(x10,each = 10),rep(imm_mark$Gene[!imm_mark$Gene %in% c(x10)],each = 5),fnames[!fnames %in% imm_mark$Gene])
+# vec <- c(rep(x10,each = 10),rep(imm_mark$Gene[!imm_mark$Gene %in% c(x10)],each = 5)) #Try it again without the variable names
+cdpr <- prcomp(x = GetAssayData(obj)[vec,])
+obj[["pca"]] <- CreateDimReducObject(embeddings = cdpr$rotation,stdev = cdpr$sdev,key = "PCA_", assay = DefaultAssay(obj))
+DimPlot(obj,reduction = "pca",group.by = "cd4_8")
+obj <- RunUMAP(obj,reduction = "pca",dims = 1:10)
+DimPlot(obj,reduction = "umap",label = T,group.by="RNA_snn_res.1.5",raster = F)
+FeaturePlot(obj,c(imm_mark$Gene[c(1:3)],"Il7r"),cols = c("lightgrey", "blue"),label = F)
+VizDimLoadings(object = obj,reduction = "pca")
+
+obj <- FindNeighbors(obj,reduction = "pca",dims = c(1:10))
+# obj <- FindClusters(obj,resolution = seq(0.25,4,0.25))
+obj <- FindClusters(obj,resolution = 1.5)
+sapply(grep("res",colnames(obj@meta.data),value = TRUE),
+       function(x) length(unique(obj@meta.data[,x])))
+
+# collist <- as.list(colnames(obj@meta.data[,c(5,25,26:41)]))
+# marklist <- list()
+# 
+# for (x in 1:length(collist)) {
+#   name <- collist[[x]]
+#   Idents(obj) <- name
+#   df <- FindAllMarkers(obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25,features = imm_mark$Gene)
+#   # head(df)
+#   marklist[[x]] <- df
+#   print(paste(x,"  out of ",length(collist)))
+# }
+# 
+# names(marklist) <- unlist(collist)
+# metrics <- lapply(marklist,function(x) getMarkers(x,imm_mark[,-c(17,23)],num = 1,printdf = F))
+# names(metrics) <- unlist(collist)
+
+# a <- ggplot(rbindlist(metrics,use.names = T,idcol = "Cluster"),aes(y =  Var,x = Cluster,fill = Cluster))+
+#   geom_violin() +
+#   theme(axis.text.x = element_text(angle = 45,hjust = 1)) +
+#   stat_summary(fun = mean,geom = "point",size = 2,color = "red")
+# b <- ggplot(rbindlist(metrics,use.names = T,idcol = "Cluster"),aes(y =  Num,x = Cluster,fill = Cluster))+
+#   geom_violin() +
+#   theme(axis.text.x = element_text(angle = 45,hjust = 1))+
+#   stat_summary(fun = mean,geom = "point",size = 2,color = "red")
+# c <- ggplot(rbindlist(metrics,use.names = T,idcol = "Cluster"),aes(y =  Var/Num,x = Cluster,fill = Cluster))+
+#   geom_violin() +
+#   theme(axis.text.x = element_text(angle = 45,hjust = 1))+
+#   stat_summary(fun = mean,geom = "point",size = 2,color = "red")
+# ggarrange(a,b,c,labels = c("A","B","C"),nrow = 3)
+# 
+# getMarkers(marklist[[10]],imm_mark[,-c(17,23)],num = 1) 
+# DimPlot(obj,reduction = "umap",label = T,group.by="RNA_snn_res.2",raster = F)
+#Think for now we will go with the 1.5 resolution because it achieves great minor separation of slightly different marker genes without much internal cluster separation.
+Idents(obj) <- "RNA_snn_res.1.5"
+DimPlot(obj,reduction = "umap",group.by = "RNA_snn_res.1.5",label = T,raster = F)
+
+#Now lets get the names together
+# genelabs <- unlist(lapply(split(marklist[[8]],marklist[[8]]$cluster),function(x) paste(unique(x$cluster),paste(x$gene,collapse = ":"),sep = "_")))
+# names(genelabs) <- levels(obj)
+# obj <- RenameIdents(obj, genelabs)
+# DimPlot(obj,reduction = "umap",label = T,raster = F,repel = T) + NoLegend()
+
+
+popnames1.5 <- c("CD4_Naive_Il7r+",#"CD4_Naive1",
+                 "CD8_Naive_Il7r+",#"CD8_Tcm1",
+                 "DN_Naive_Il7r",#"DN_Tcm", #cluster2
+                 "CD4_Tem_Il7r+",#CD4_Tem",
+                 "DN_Tem_Il7r+",#"DN_Tem/Trm1",
+                 "CD8_Tem_Il7r-",#CD8_Tscm", #cluster5
+                 "CD4_Effector_Treg",#CD4_Tem/Teff",
+                 "DN_Effector_Treg",#DN_Tem/Trm2",
+                 "CD4_Tcm_Il7r-",#CD4_Tcm", #cluster8
+                 "CD4_Tscm",
+                 "CD4_Tscm_Il7r-",#CD4_Naive2",
+                 "CD4_Th1_Il7r-",#CD4_Treg1",#cluster11
+                 "CD8_Naive_Il7r+",#CD8_Tcm1",
+                 "DN_Tcm_Il7r-",#DN_Tcm1",
+                 "CD8_Tc1_Gzma-",#CD8_Tem",#cluster14
+                 "CD4_Tem_Il7rlo",#CD4_Tscm5",
+                 "DN_Tscm_Il7r-",#DN_Naive1",
+                 "CD8_Tcm_Il7r+",#CD8_Tcm2",
+                 "DN_Tcm_Il7r+",#DN_Treg/Tcm",#cluster18
+                 "CD4_RTE",#CD4_Naive3",
+                 "CD8_RTE",#probably not change later
+                 "DN_pre_iTreg_Il7r-",#DN_Treg1",
+                 "CD4_Th1_Il7r+",#CD4_Treg2",#cluster22
+                 "DN_Th1_Il7r+",#DN_Activated",
+                 "DN_pre_nTreg_Il7r-",#DN_Tcm2",
+                 "CD8_Trm/Tc1_Gzma+",#CD8_Tem/Tc1",
+                 "DN_Naive_Il7r-",#DN_Naive2",#cluster26
+                 "CD8_Trm/Tc1_Gzma+",#"CD8_Tem/Tc1w32",
+                 "CD8_Trm/Tc1_Gzma+",#"CD8_Tem/Tc134",
+                 "CD8_Naive_Il7r-",#CD8_Naive",
+                 "CD4_preTreg_Il7r-",#CD4_Treg/Tcm",
+                 "DP_naive",#cluster31
+                 "DN_Tscm",
+                 "DN_Treg",
+                 "DN_Trm/Tc1_Il7r-")#DN_Tem")
+names(popnames1.5) <- levels(obj)
+obj <- RenameIdents(obj, popnames1.5)
+DimPlot(obj,reduction = "umap",label = T,raster = F)
+FeaturePlot(obj,c(imm_mark$Gene[c(1:2)],"Id2","Sell"),cols = c("lightgrey", "blue"),label = T,raster = F)
+FeaturePlot(obj,c("Pecam1","Foxp3","Il2ra","Itgal"),cols = c("lightgrey", "blue"),label = T,raster = F)
+# savemeta200 <- obj@meta.data
+DotPlot(obj, features = c(imm_mark$Gene,"Uchl1","Itga1","Cxcr5","Foxo1","Id3","Id2"),dot.scale = 7,cols = c("yellow","blue")) + RotatedAxis()
+
+DotPlot(obj, features = c(imm_mark$Gene,"Uchl1","Itga1","Tcf1"),dot.scale = 7,cols = c("orange", "blue"),group.by = "RNA_snn_res.1.5") + RotatedAxis()
+FeaturePlot(obj,c("Il17a"),cols = c("lightgrey", "blue"),label = T,raster = T)
+
+df <- FindAllMarkers(obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25,features = imm_mark$Gene)
+```
+https://www.sinobiological.com/research/cd-antigens/cluster-of-differentiation-t-lymphocyte
+
+Lets make a nifty plot that lets us slider through the various tcell clones as to what clusters they fall into.
+
+```{r}
+require(ggplot2)
+require(plotly)
+require(gganimate)
+require(ggrastr)
+# obj <- RunUMAP(obj,dims = c(1:10))
+plot <- DimPlot(obj, reduction = "umap")
+plotdata <- plot$data
+
+# umap1 <- obj$UMAP_1
+# umap2 <- obj$UMAP_2
+TCR.df.rep <- subset(TCR.df.final,TCR %in% TCRabove)
+tbl <- as.data.frame(sort(table(TCR.df.final$TCR)[table(TCR.df.final$TCR) > 1]))
+over <- names(rev(sort(table(TCR.df.final$TCR)[table(TCR.df.final$TCR) > 9])))
+TCR.df.umap <- cbind(TCR.df.rep,plotdata[TCR.df.rep$Cell,]) 
+lev <- as.factor(TCR.df.umap$TCR)
+levels(lev) <- names((sort(table(TCR.df.final$TCR)[table(TCR.df.final$TCR) > 1])))
+TCR.df.umap <- within(TCR.df.umap, Frame <- as.integer(lev))
+TCR.df.big <- cbind(TCR.df.final,plotdata[TCR.df.final$Cell,])
+TCR.df.big <- within(TCR.df.big,Frame <- NA)
+TCR.df.big[TCR.df.umap[TCR.df.umap$TCR %in% over,]$Cell,'Frame'] <- TCR.df.umap[TCR.df.umap$TCR %in% over,]$Frame
+TCR.df.umap <- within(TCR.df.umap, freq <- tbl[TCR.df.umap$Frame,]$Freq)
+
+over <- names(rev(sort(table(TCR.df.final$TCR)[table(TCR.df.final$TCR) > 9])))
+tmp <- TCR.df.umap[TCR.df.umap$TCR %in% over,]
+p <- ggplot(tmp,aes(x =UMAP_1,y = UMAP_2,colour = Cluster)) +
+  geom_point() +
+  labs(title = "TCR Sequence: {closest_state}") +
+  shadow_mark(alpha = 0.1, size = 1,past = T, future = T) +
+  # ggrastr::geom_point_rast(size=0.1, alpha=0.1) + #Do once dependency for ggrastr is installed
+  transition_states(TCR,transition_length = 2,state_length = 1)
+animate(p, duration = 55)
+anim_save("TCRover10.gif", animation = last_animation(), path = "~/LuberLab/Nodmice/Figures/")
+
+
+# geom_point(alpha = 0.1) +
+  # geom_point(aes(frame = Frame))
+# fig <- ggplotly(p)
+
+# fig <- fig %>% 
+#   animation_opts(
+#     1000, easing = "exp-in-out", redraw = FALSE
+#   )
+# fig
+# htmlwidgets::saveWidget(fig, "~/LuberLab/Nodmice/Figures/TCRslider2k.html")
+
+```
+
+Lets regenerate some of the plots made previously using these clusters
+
+
+```{r}
+require(ggplot2)
+cdstat <- unlist(lapply(strsplit(as.character(Idents(obj)),"_"),function(x) x[[1]]))
+popsplit <-unlist(lapply(strsplit(popnames1.5,"_"),function(x) x[[1]]))
+idents <- factor(Idents(obj),levels = unique(popnames1.5[c(which(popsplit == "CD4"),which(popsplit == "CD8"),which(popsplit == "DN"),which(popsplit == "DP"))]))
+                   #popnames1.5[c(1,4,6,8,9,11,15,19,22,30,2,5,12,14,17,20,25,27,28,29,3,5,7,13,16,18,21,23,24,26,32,33,34,31)])
+ggplot(obj@meta.data,aes( x = idents, fill = cdstat)) +
+         geom_histogram(stat = "count") +
+         facet_wrap(~mergedsampletype,scale = "free",ncol = 1) +
+         scale_y_continuous(expand = c(0,0)) +
+         theme(axis.text.x = element_text(angle = 45,hjust = 1))
+
+ggplot(obj@meta.data,aes( x = idents,fill = cdstat)) +
+         geom_histogram(stat = "count") +
+         facet_wrap(~Matching_pre_filter,scales = "free",ncol = 1) +
+         scale_y_continuous(expand = c(0,0)) +
+         theme(axis.text.x = element_text(angle = 45,hjust = 1))
+#cluster tree
+obj <- BuildClusterTree(obj,dims = 1:10)
+
+PlotClusterTree(obj)
+FeaturePlot(obj,c("Foxp3","Tcf7"),cols = c("lightgrey", "blue"),label = T,raster = F)
+FeaturePlot(obj,imm_mark$Gene[1:12],cols = c("lightgrey", "blue"),label = T,raster = T)
+FeaturePlot(obj,imm_mark$Gene[13:24],cols = c("lightgrey", "blue"),label = T,raster = T)
+FeaturePlot(obj,imm_mark$Gene[25:36],cols = c("lightgrey", "blue"),label = T,raster = T)
+FeaturePlot(obj,imm_mark$Gene[37:48],cols = c("lightgrey", "blue"),label = T,raster = T)
+FeaturePlot(obj,imm_mark$Gene[49:52],cols = c("lightgrey", "blue"),label = T,raster = T)
+
+#Plot dim per sampletype
+DimPlot(obj,reduction = "umap",label = T,raster = F,cells = rownames(obj@meta.data[obj@meta.data$mergedsampletype == "T1D_Islets",]))
+DimPlot(obj,reduction = "umap",label = T,raster = F,cells = rownames(obj@meta.data[obj@meta.data$mergedsampletype == "T1D_pbmc",]))
+DimPlot(obj,reduction = "umap",label = T,raster = F,cells = rownames(obj@meta.data[obj@meta.data$mergedsampletype == "nonT1D_pbmc",]))
+DimPlot(obj,reduction = "umap",label = F,raster = T,group.by = "mergedsampletype")
+DimPlot(obj,reduction = "umap",cols = c("blue","lightgrey","lightgrey"),label = F,raster = F,group.by = "Matching_pre_filter")
+```
+
+
+
+Lets run a quick monocle on this:
+
+```{r}
+require(monocle3)
+library(SeuratWrappers)
+cds <- as.cell_data_set(obj)
+rowData(cds)$gene_short_name <- rownames(GetAssayData(obj))
+# metadata(cds) <- obj@meta.data
+cds
+# cds <- reduce_dimension(cds)
+# plot_cells(cds,genes = c("Cd4","Cd8a","Cd8b1","Foxo4"))
+#Monocle is even worse I need to find a way to 
+# plot_cells(cds, color_cells_by="sampleid", label_cell_groups=FALSE)
+cds <- cluster_cells(cds, reduction_method = "UMAP",resolution=1e-5)
+plot_cells(cds)
+#So that did 16 clusters
+#We can look at top markers in each###############################
+# marker_test_res <- top_markers(cds, group_cells_by="partition", 
+#                                reference_cells=1000, cores=64)
+# top_specific_markers <- marker_test_res %>%
+#                             filter(fraction_expressing >= 0.10) %>%
+#                             group_by(cell_group) %>%
+#                             top_n(3, pseudo_R2)
+# 
+# top_specific_marker_ids <- unique(top_specific_markers %>% pull(gene_id))
+# plot_genes_by_group(cds,
+#                     top_specific_marker_ids,
+#                     group_cells_by="partition",
+#                     ordering_type="maximal_on_diag",
+#                     max.size=3)
+cds <- learn_graph(cds)
+plot_cells(cds,
+           color_cells_by = "cluster",
+           label_groups_by_cluster=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE)
+cds <- order_cells(cds)
+colData(cds)$assigned_cell_type <-Idents(obj)
+plot_cells(cds,
+           color_cells_by = "psuedotime",
+           label_cell_groups=F,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=1.5,group_label_size = 1.5,label_groups_by_cluster = T,trajectory_graph_color = "red")
+plot_cells(cds,
+           color_cells_by = "assigned_cell_type",
+           label_cell_groups=T,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=1.5,group_label_size = 4,label_groups_by_cluster = F,trajectory_graph_color = "red")
+
+obj <- AddMetaData(
+  object = obj,
+  metadata = cds@principal_graph_aux@listData$UMAP$pseudotime,
+  col.name = "Psuedotime"
+)
+FeaturePlot(obj, c("Psuedotime"), pt.size = 0.1,label = T,raster =  F) & scale_color_viridis_c()
+```
+
+
+
+#Gliphi
+
+We did some TCR clustering earlier but let us make use of a program that supposedly can cluster t cells by siimilar epitoph binding
+
+```{r}
+# we first need to set up the file which is set up as TCRB  vB vJ(just fake these) TCRA;;;
+#CDR3b  TRBV  TRBJ  CDR3a  subject:condition count
+head(TCR.df.final)
+tcr.tmp <- TCR.df.final[!duplicated(TCR.df.final$TCR),]
+tcrwrite <- data.frame(CDR3b =  tcr.tmp$split.y,TRBV = rep("TRBV20-1",nrow(tcr.tmp)),TRBJ = rep("TRBJ1-5",nrow(tcr.tmp)),CDR3a = tcr.tmp$split.x,subject_condition = rep("tmp:tmp",nrow(tcr.tmp)),count = rep(1,nrow(tcr.tmp)))
+write.table(tcrwrite,file = "~/LuberLab/Nodmice/Modules/Gliph/tcrtmp.tsv",sep = "\t",row.names = F,quote = F )
+
+gliph <- read.table(file = "~/LuberLab/Nodmice/Modules/Gliph/giphinohead.csv",sep =",",header = F)
+
+
+```
+
+#Psuedotime TCR
+
+Now we want to evaluate psuedotime on the TCR specific  level to see if certain TCR's or clusters of TCRs are differentiating in a similar fashion. To do this we essentially have to generate either pseudotime or the  lines/edges from  monocle for  each TCR clone and then pull those data points onto the same graph. 
+
+```{r}
+require(data.table)
+require(RColorBrewer)
+require(tidyr)
+require(dplyr)
+require(ggpubr)
+data2 <- TCR.df.umap %>% group_by(ident) %>% select(UMAP_1, UMAP_2) %>% summarize_all(mean)
+  
+getGraph <- function(cds) {
+        ica_space_df <- t(cds@principal_graph_aux[["UMAP"]]$dp_mst) %>% 
+            as.data.frame() %>% dplyr::select(prin_graph_dim_1 = 1, 
+            prin_graph_dim_2 = 2) %>% dplyr::mutate(sample_name = rownames(.), 
+            sample_state = rownames(.))
+        dp_mst <- cds@principal_graph[["UMAP"]]
+        edge_df <- dp_mst %>% igraph::as_data_frame() %>% dplyr::select(source = "from", 
+            target = "to") %>% dplyr::left_join(ica_space_df %>% 
+            dplyr::select(source = "sample_name", source_prin_graph_dim_1 = "prin_graph_dim_1", 
+                source_prin_graph_dim_2 = "prin_graph_dim_2"), 
+            by = "source") %>% dplyr::left_join(ica_space_df %>% 
+            dplyr::select(target = "sample_name", target_prin_graph_dim_1 = "prin_graph_dim_1", 
+                target_prin_graph_dim_2 = "prin_graph_dim_2"), 
+            by = "target")
+        return(edge_df)
+}
+
+edges <- getGraph(cds)
+
+#Now get a list with every TCR and the cells that make it up
+TCRmultlist <- lapply(split(TCR.df.umap,TCR.df.umap$TCR),function(x) rownames(x))
+head(TCRmultlist)
+tmp <- TCRmultlist[which(unlist(lapply(TCRmultlist,function(x) length(x) > 4)))]
+#Now we need a function that will run the subset, learn graph, and the edges for each cell subset
+runSubset <- function(x,cds) {
+  cdssub <- cds[,x]
+  cdssub <- cluster_cells(cdssub)
+  cdssub <- learn_graph(cdssub)
+  return(getGraph(cdssub))
+} 
+TCRedgelist <- lapply(tmp,function(x) runSubset(x,cds))
+TCRedges <-  rbindlist(TCRedgelist,idcol = "TCR")
+colnames(TCRedges) <- c("TCR","Source","Target","x","y","xend","yend")
+
+ggplot(TCR.df.umap,aes(x = UMAP_1,y = UMAP_2, colour = Cluster)) +
+  geom_point() +
+  geom_segment(data = TCRedges,mapping = aes(x = x,y = y, xend = xend, yend = yend,colour =  "grey"),alpha = 0.3,size = 1) +
+  ggtitle("Clonal expansion for TCR > 4 cells") +
+  ggrepel::geom_text_repel(data = data2,aes(label = Cluster),show.legend = F,color = "black") +
+  theme(legend.position = "none")
+
+#also groups from the clustering colors
+TCRedges.groups <- within(TCRedges,Group <- groups[TCRedges$TCR])
+groupcols <- palette.colors(10,"Tableau 10")[TCRedges.groups$Group]
+ggplot(TCR.df.umap,aes(x = UMAP_1,y = UMAP_2, colour = Cluster)) +
+  geom_point() +
+  geom_segment(data = TCRedges.groups,mapping = aes(x = x,y = y, xend = xend, yend = yend),colour = groupcols,alpha = 0.7,size = 1) +
+  ggtitle("Clonal expansion for TCR > 4 cells") +
+  ggrepel::geom_text_repel(data = data2,aes(label = Cluster),show.legend = F,color = "black") #+
+  # theme(legend.position = "none")
+
+#Okay now do the same thing but for diabetic cells only 
+subtmp <- subset(TCR.df.umap,Sample %in% c("T1D_Islets","T1D_pbmc"))
+TCRmultlist <- lapply(split(subtmp,subtmp$TCR),function(x) rownames(x))
+head(TCRmultlist)
+tmp <- TCRmultlist[which(unlist(lapply(TCRmultlist,function(x) length(x) > 4)))]
+TCRedgelist <- lapply(tmp,function(x) runSubset(x,cds))
+TCRedgesdiab <-  rbindlist(TCRedgelist,idcol = "TCR")
+colnames(TCRedgesdiab) <- c("TCR","Source","Target","x","y","xend","yend")
+diabumap <- subset(TCR.df.umap,Sample %in% c("T1D_Islets","T1D_pbmc"))
+a <- ggplot(diabumap,aes(x = UMAP_1,y = UMAP_2, colour = Cluster)) +
+  geom_point() +
+  geom_segment(data = TCRedgesdiab,mapping = aes(x = x,y = y, xend = xend, yend = yend,colour =  "grey"),alpha = 0.4,size = 1) +
+  ggtitle("Clonal expansion for diabetic TCR > 4 cells") +
+  ggrepel::geom_text_repel(data = subset(data2,ident %in% unique(diabumap$ident)),aes(label = ident),show.legend = F,color = "black") +
+  theme(legend.position = "none")
+
+
+
+#And dnon diabetic cells only
+subtmp <- subset(TCR.df.umap,Sample %in% c("nonT1D_pbmc"))
+TCRmultlist <- lapply(split(subtmp,subtmp$TCR),function(x) rownames(x))
+head(TCRmultlist)
+tmp <- TCRmultlist[which(unlist(lapply(TCRmultlist,function(x) length(x) > 4)))]
+TCRedgelist <- lapply(tmp,function(x) runSubset(x,cds))
+TCRedgesnondiab <-  rbindlist(TCRedgelist,idcol = "TCR")
+colnames(TCRedgesnondiab) <- c("TCR","Source","Target","x","y","xend","yend")
+nondiabumap <- subset(TCR.df.umap,Sample == "nonT1D_pbmc")
+b <- ggplot(nondiabumap,aes(x = UMAP_1,y = UMAP_2, colour = Cluster)) +
+  geom_point() +
+  geom_segment(data = TCRedgesnondiab,mapping = aes(x = x,y = y, xend = xend, yend = yend,colour =  "grey"),alpha = 0.5,size = 1) +
+  ggtitle("Clonal expansion for nondiabetic TCR > 4 cells") +
+  # geom_label(data = data2,mapping = aes(label =  Cluster))
+  ggrepel::geom_text_repel(data = subset(data2, ident %in% unique(nondiabumap$ident)),aes(label = ident),show.legend = F,color = "black") +
+  theme(legend.position = "none")
+ggarrange(a,b,nrow = 1,ncol = 2)
+
+```
+
+#Weighted Co expression analysis
+
+We can determine the co expression clusters of genes by running the code in 
+
+"~/Luberlab/Nodmice/Modules/makeModules.sh"
+
+Now let us read these in:
+
+```{r}
+require(WGCNA)
+require(topGO)
+require(biomaRt)
+require(org.Mm.eg.db)
+require(clusterProfiler)
+library(Rgraphviz)
+require(enrichplot)
+require(gplots)
+require(tidyr)
+
+
+load(file = "~/LuberLab/Nodmice/Modules/modules.Rdata")
+load("~/LuberLab/Nodmice/Modules/adj.Rdata")
+head(MEs)
+head(moduleLabels)
+head(moduleColors)
+genenames <- row.names(adj)
+module.df <- data.frame(Gene = genenames,Module = moduleColors)
+module.df <- module.df[module.df$Module != "grey",]
+head(module.df)
+geneTree
+sizeGrWindow(10,5)
+plotDendroAndColors(geneTree, colors = moduleColors, dendroLabels = FALSE, hang = 0.03,
+main = "Gene hierarchical clustering dendrogram and simulated module colors" )
+
+####We should plot the genes from each module as dotplots maybe?
+modulesplit <- split(module.df,module.df$Module)
+modulesplit <- lapply(modulesplit,function(x) x$Gene)
+modulesplit.exp <- lapply(modulesplit,function(x) t(as.matrix(GetAssay(obj)[x]))[rownames(obj@meta.data),])
+# modulesplit.df <- lapply(modulesplit,function(x) data.frame(x,obj@meta.data))
+modulesplit.avg <- lapply(modulesplit.exp,function(x) data.frame(Cell = rownames(x), Mean = rowMeans(x)))
+Modulemeans <- data.frame(Cell = modulesplit.avg[["blue"]]$Cell,blue = modulesplit.avg[["blue"]]$Mean,brown = modulesplit.avg[["brown"]]$Mean, green = modulesplit.avg[["green"]]$Mean, turquoise = modulesplit.avg[["turquoise"]]$Mean, yellow = modulesplit.avg[["yellow"]]$Mean)
+rownames(Modulemeans) <- Modulemeans$Cell
+head(Modulemeans)
+obj@meta.data <- cbind(obj@meta.data,Modulemeans[rownames(obj@meta.data),])
+head(obj@meta.data)
+
+
+FeaturePlot(obj,features = "yellow",cols = c("lightgrey", "blue"),label = T,raster = F)
+FeaturePlot(obj,features = "brown",cols = c("lightgrey", "blue"),label = T,raster = F)
+FeaturePlot(obj,features = "green",cols = c("lightgrey", "blue"),label = T,raster = F)
+FeaturePlot(obj,features = "turquoise",cols = c("lightgrey", "blue"),label = T,raster = F)
+FeaturePlot(obj,features = c("yellow","green"),cols = c("lightgrey", "blue"),label = T,raster = F)
+
+# yellow <- data.frame(modulesplit.exp[["yellow"]],obj@meta.data[,c("Matching_pre_filter","sampletype","cd4_8","RNA_snn_res.1.5")],Cell = rownames(obj@meta.data), Idents = Idents(obj))
+# yellow <- yellow %>% gather(Gene, Count, -Matching_pre_filter,-sampletype,-cd4_8,-RNA_snn_res.1.5,-Cell,-Idents)
+# ggplot(yellow,aes(x = Idents,y = Count,group = "Gene")) +
+#   geom_point()
+# genenum <- rep(0,length(genenames))
+# names(genenum) <- genenames
+# #Lets calc GO annotations for each cluster
+# annFUN.org(whichOnto = "BP",feasibleGenes = genenames,mapping = "org.Mm.eg.db",ID = "symbol")
+# moduleGO <- function(x) {
+#   go_data <- new("topGOdata",
+#                ontology = "BP",
+#                allGenes = genenum,
+#                nodeSize = 5,
+#                annotationFun = annFUN.org(whichOnto = "BP",feasibleGenes = genenames,mapping = "org.Mm.eg.db",ID = "symbol"))
+# }
+doGO <- function(x) {
+  x <- x$Gene
+  egobp <- enrichGO(gene = x,OrgDb = org.Mm.eg.db,keyType = 'SYMBOL',ont = "BP",pAdjustMethod = "BH",pvalueCutoff  = 0.01,qvalueCutoff  = 0.05)
+  egocc <- enrichGO(gene = x,OrgDb = org.Mm.eg.db,keyType = 'SYMBOL',ont = "CC",pAdjustMethod = "BH",pvalueCutoff  = 0.01,qvalueCutoff  = 0.05)
+  egomf <- enrichGO(gene = x,OrgDb = org.Mm.eg.db,keyType = 'SYMBOL',ont = "MF",pAdjustMethod = "BH",pvalueCutoff  = 0.01,qvalueCutoff  = 0.05)
+  p1 <- dotplot(egobp, showCategory = 30) + ggtitle("Biological Process")
+  p2 <- dotplot(egocc, showCategory = 30) + ggtitle("Cellular Compartment")
+  p3 <- dotplot(egomf, showCategory = 30) + ggtitle("Molecular Function")
+  return(list(BP = egobp, CC = egocc, MF = egomf, BPplot = p1, CCplot = p2, MFplot = p3))
+}
+splitmod <- split(module.df,module.df$Module)
+names(splitmod) <- unique(unlist(lapply(splitmod,function(x) x$Module)))
+modGO <- lapply(splitmod,function(x) doGO(x))
+
+ggarrange(modGO[["yellow"]][[4]] + theme(legend.position = "none"),modGO[["yellow"]][[5]] + theme(legend.position = "none"),modGO[["yellow"]][[6]], ncol = 3,nrow = 1)
+ggarrange(modGO[["green"]][[4]] + theme(legend.position = "none"),modGO[["green"]][[5]] + theme(legend.position = "none"),modGO[["green"]][[6]], ncol = 3,nrow = 1)
+# dotplot(egobp, showCategory = 30)
+# par(cex = 0.3)
+# plotGOgraph(egobp)
+# par(cex = 1)
+#We can now look at corelations between groups and factors
+datTraits <- model.matrix( ~ RNA_snn_res.1.5 - 1, data = obj@meta.data)
+colnames(datTraits) <- popnames1.5
+moduleTraitCor = cor(x = MEs,y =  datTraits, use= "p")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, ncol(GetAssay(obj)))
+heatmap.2(moduleTraitCor,
+            col=blueWhiteRed(50),
+            trace='none', dendrogram='row', margins = c(10,10),
+            main='Cluster-Module Relationship',
+            density.info='none',cexCol = 1, cexRow = 1)#,RowSideColors = substr(names(MEs),3,length(MEs)))
+HighCorrelationCluster <- moduleTraitCor[,colSums(abs(moduleTraitCor) > .5) > 0L]
+#####Now do sampletype
+datTraits <- model.matrix( ~ mergedsampletype - 1, data = obj@meta.data)
+moduleTraitCor = cor(x = MEs,y =  datTraits, use= "p")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, ncol(GetAssay(obj)))
+heatmap.2(moduleTraitCor,
+            col=blueWhiteRed(50),
+            trace='none', dendrogram='row', margins = c(10,10),
+            main='SampleType-Module Relationship',
+            density.info='none',cexCol = 1, cexRow = 1)#,RowSideColors = substr(names(MEs),3,length(MEs)))
+HighCorrelationsampletype <- moduleTraitCor[,colSums(abs(moduleTraitCor) > .5) > 0L]
+#####Now do Tcell group
+TCRtmp.df <- data.frame( TCR = obj@meta.data$TCR, group = 0)
+TCRtmp.df$group <- groups[TCRtmp.df$TCR]
+TCRtmp.df$group[is.na(TCRtmp.df$group)] <- 0
+TCRtmp.df$group <- as.factor(TCRtmp.df$group)
+tmp <- within(obj@meta.data, group <- TCRtmp.df$group)
+datTraits <- model.matrix( ~ group - 1 , data = tmp)
+moduleTraitCor = cor(x = MEs,y =  datTraits, use= "p")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, ncol(GetAssay(obj)))
+heatmap.2(moduleTraitCor,
+            col=blueWhiteRed(50),
+            trace='none', dendrogram='row', margins = c(10,10),
+            main='TCRHcluster-Module Relationship',
+            density.info='none',cexCol = 1, cexRow = 1)#,RowSideColors = substr(names(MEs),3,length(MEs)))
+HighCorrelationsampletype <- moduleTraitCor[rowSums(abs(moduleTraitCor) > .5) > 0L,]
+#####Now do for expanded TCR, we can use this to identify groups of TCR that express similar
+datTraits <- model.matrix( ~ TCR - 1 , data = obj@meta.data)
+moduleTraitCor = cor(x = MEs,y =  datTraits, use= "pairwise.complete.obs")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, ncol(GetAssay(obj)))
+heatmap.2(moduleTraitCor,
+            col=blueWhiteRed(50),
+            trace='none', dendrogram='row', margins = c(10,10),
+            main='TCR-Module Relationship',
+            density.info='none',cexCol = 1, cexRow = 1)#,RowSideColors = substr(names(MEs),3,length(MEs)))
+HighCorrelationTCR <- as.data.frame(moduleTraitCor[,colSums(abs(moduleTraitCor) > .3) > 0L])
+
+#####We can also check for like DN status
+datTraits <- model.matrix( ~ cd4_8 - 1 , data = obj@meta.data)
+moduleTraitCor = cor(x = MEs,y =  datTraits, use= "pairwise.complete.obs")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, ncol(GetAssay(obj)))
+heatmap.2(moduleTraitCor,
+            col=blueWhiteRed(50),
+            trace='none', dendrogram='row', margins = c(10,10),
+            main='DN-Module Relationship',
+            density.info='none',cexCol = 1, cexRow = 1)#,RowSideColors = substr(names(MEs),3,length(MEs)))
+HighCorrelationDN <- moduleTraitCor[,colSums(abs(moduleTraitCor) > .5) > 0L]
+#####I guess there is matching as well but we aren't finding any correlations here
+datTraits <- model.matrix( ~ Matching_pre_filter - 1 , data = obj@meta.data)
+moduleTraitCor = cor(x = MEs,y =  datTraits, use= "pairwise.complete.obs")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, ncol(GetAssay(obj)))
+heatmap.2(moduleTraitCor,
+            col=blueWhiteRed(50),
+            trace='none', dendrogram='row', margins = c(10,10),
+            main='Matching-Module Relationship',
+            density.info='none',cexCol = 1, cexRow = 1)#,RowSideColors = substr(names(MEs),3,length(MEs)))
+HighCorrelationDN <- moduleTraitCor[,colSums(abs(moduleTraitCor) > .5) > 0L]
+
+```
+
